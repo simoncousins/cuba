@@ -7,61 +7,61 @@ import (
 	"sync/atomic"
 )
 
-type Task func(*Handle)
+type Task[I any] func(*Handle[I])
 
 var PoolAbortedErr = errors.New("pool has been aborted")
 
 const (
-	POOL_RUN = iota
-	POOL_FINISH
-	POOL_ABORT
+	PoolRun = iota
+	PoolFinish
+	PoolAbort
 )
 
-type Pool struct {
+type Pool[I any] struct {
 	mutex      *sync.Mutex
-	bucket     Bucket
+	bucket     Bucket[I]
 	cond       *sync.Cond
 	numWorkers int32
 	maxWorkers int32
 	state      int
-	task       Task
+	task       Task[I]
 	wg         *sync.WaitGroup
 }
 
-// Constructs a new Cuba thread pool.
+// New constructs a new Cuba thread pool.
 //
 // The worker callback will be called by multiple goroutines in parallel, so is
 // expected to be thread safe.
 //
 // Bucket affects the order that items will be processed in. cuba.NewQueue()
 // provides FIFO ordering, while cuba.NewStack() provides LIFO ordered work.
-func New(task Task, bucket Bucket) *Pool {
+func New[I any](task Task[I], bucket Bucket[I]) *Pool[I] {
 	m := &sync.Mutex{}
-	return &Pool{
+	return &Pool[I]{
 		mutex:      m,
 		bucket:     bucket,
 		cond:       sync.NewCond(m),
 		task:       task,
 		maxWorkers: int32(runtime.NumCPU()),
 		wg:         &sync.WaitGroup{},
-		state:      POOL_RUN,
+		state:      PoolRun,
 	}
 }
 
-// Sets the maximum number of worker goroutines.
+// SetMaxWorkers sets the maximum number of worker goroutines.
 //
 // Default: runtime.NumCPU() (i.e. the number of CPU cores available)
-func (pool *Pool) SetMaxWorkers(n int32) {
+func (pool *Pool[I]) SetMaxWorkers(n int32) {
 	pool.maxWorkers = n
 }
 
 // Push an item into the worker pool. This will be scheduled to run on a worker
 // immediately.
-func (pool *Pool) Push(item interface{}) error {
+func (pool *Pool[I]) Push(item I) error {
 	pool.mutex.Lock()
 	defer pool.mutex.Unlock()
 
-	if pool.state == POOL_ABORT {
+	if pool.state == PoolAbort {
 		return PoolAbortedErr
 	}
 
@@ -84,15 +84,15 @@ func (pool *Pool) Push(item interface{}) error {
 	return nil
 }
 
-// Push multiple items into the worker pool.
+// PushAll pushes multiple items into the worker pool.
 //
-// Compared to Push() this only aquires the lock once, so may reduce lock
+// Compared to Push() this only acquires the lock once, so may reduce lock
 // contention.
-func (pool *Pool) PushAll(items []interface{}) error {
+func (pool *Pool[I]) PushAll(items []I) error {
 	pool.mutex.Lock()
 	defer pool.mutex.Unlock()
 
-	if pool.state == POOL_ABORT {
+	if pool.state == PoolAbort {
 		return PoolAbortedErr
 	}
 
@@ -111,34 +111,34 @@ func (pool *Pool) PushAll(items []interface{}) error {
 	return nil
 }
 
-// Calling Finish() waits for all work to complete, and allows goroutines to shut
+// Finish waits for all work to complete, and allows goroutines to shut
 // down.
-func (pool *Pool) Finish() {
+func (pool *Pool[I]) Finish() {
 	pool.mutex.Lock()
 
-	pool.state = POOL_FINISH
+	pool.state = PoolFinish
 	pool.cond.Broadcast()
 
 	pool.mutex.Unlock()
 	pool.wg.Wait()
 }
 
-func (pool *Pool) Abort() {
+func (pool *Pool[I]) Abort() {
 	pool.mutex.Lock()
 
-	pool.state = POOL_ABORT
+	pool.state = PoolAbort
 	pool.cond.Broadcast()
 
 	pool.mutex.Unlock()
 	pool.wg.Wait()
 }
 
-func (pool *Pool) next() (interface{}, bool) {
+func (pool *Pool[I]) next() (interface{}, bool) {
 	pool.mutex.Lock()
 	defer pool.mutex.Unlock()
 
 	for pool.bucket.IsEmpty() {
-		if pool.state == POOL_FINISH || pool.state == POOL_ABORT {
+		if pool.state == PoolFinish || pool.state == PoolAbort {
 			return nil, false
 		}
 		pool.cond.Wait()
@@ -149,8 +149,8 @@ func (pool *Pool) next() (interface{}, bool) {
 	return item, true
 }
 
-func (pool *Pool) runWorker() {
-	handle := Handle{
+func (pool *Pool[I]) runWorker() {
+	handle := Handle[I]{
 		pool: pool,
 	}
 	for {

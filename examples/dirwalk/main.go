@@ -13,8 +13,8 @@ type Directory struct {
 	info os.FileInfo
 }
 
-func worker(handle *cuba.Handle) {
-	job := handle.Item().(*Directory)
+func worker(handle *cuba.Handle[*Directory]) {
+	job := handle.Item()
 
 	file, err := os.Open(job.path)
 	if err != nil {
@@ -52,7 +52,7 @@ func worker(handle *cuba.Handle) {
 }
 
 func main() {
-	ws := cuba.New(worker, cuba.NewStack())
+	ws := cuba.New(worker, cuba.NewStack[*Directory]())
 
 	info, err := os.Stat(".")
 	if err != nil {
